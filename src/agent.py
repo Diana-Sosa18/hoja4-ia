@@ -13,6 +13,11 @@ Escriba "Bye" o presione Ctrl-C para salir.
 """
 import os
 
+# El modelo de embeddings ya se descargó al correr load_data.py; se evita que
+# sentence-transformers intente revisar Hugging Face por internet en cada
+# arranque (eso puede colgarse varios minutos con conexiones lentas/inestables).
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
