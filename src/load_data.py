@@ -61,7 +61,10 @@ def load(corpus_path: Path):
     print(f"Cargando modelo de embeddings '{MODEL_NAME}'...")
     model = SentenceTransformer(MODEL_NAME)
 
-    textos = [f"Pregunta: {f['pregunta']}\nRespuesta: {f['respuesta']}" for f in faqs]
+    # Se embebe únicamente la pregunta: las respuestas comparten texto de plantilla
+    # casi idéntico entre FAQs, así que incluirlas diluye la señal semántica y
+    # pega entre sí embeddings de preguntas totalmente distintas.
+    textos = [f["pregunta"] for f in faqs]
     print("Generando embeddings...")
     embeddings = model.encode(textos, show_progress_bar=True, normalize_embeddings=True)
 

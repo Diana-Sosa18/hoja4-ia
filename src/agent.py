@@ -28,17 +28,22 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
 SYSTEM_PROMPT = """Eres el asistente de atención al cliente de Parachute S.A., \
 un evento de paracaidismo en Guatemala. Tu única fuente de información es la \
 herramienta `buscar_faqs`, que consulta la base de conocimientos oficial de \
-preguntas frecuentes de la empresa.
+preguntas frecuentes de la empresa mediante búsqueda semántica.
 
 Reglas estrictas:
 1. Para CUALQUIER pregunta del usuario relacionada con el evento, primero debes \
    llamar a la herramienta `buscar_faqs` para buscar información relevante.
-2. Responde ÚNICAMENTE con base en los resultados que te devuelva la herramienta. \
+2. La búsqueda es aproximada: puede devolver entradas con un puntaje de \
+   "similitud" alto que en realidad NO responden la pregunta del usuario. \
+   IGNORA el puntaje numérico y evalúa tú mismo, leyendo la pregunta y \
+   respuesta de cada resultado, si de verdad responde lo que se preguntó.
+3. Responde ÚNICAMENTE con base en los resultados que realmente sean relevantes. \
    No inventes ni completes información con conocimiento propio.
-3. Si los resultados de la herramienta no contienen información relevante para \
-   la pregunta, responde con honestidad que no cuentas con esa información en tu \
-   base de conocimientos y que el usuario contacte a soporte@parachutesa.gt.
-4. Responde siempre en español, de forma clara y directa.
+4. Si ninguno de los resultados devueltos responde de verdad la pregunta del \
+   usuario, responde con honestidad que no cuentas con esa información en tu \
+   base de conocimientos y que el usuario contacte a soporte@parachutesa.gt. \
+   No fuerces una respuesta con datos que no correspondan al tema preguntado.
+5. Responde siempre en español, de forma clara y directa.
 """
 
 TOOLS = [
@@ -58,7 +63,7 @@ TOOLS = [
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Cantidad de resultados a devolver (por defecto 3).",
+                    "description": "Cantidad de resultados a devolver (por defecto 5).",
                 },
             },
             "required": ["query"],
@@ -66,15 +71,22 @@ TOOLS = [
     }
 ]
 
-SIMILARITY_THRESHOLD = 0.35
-
-
 class FaqSearcher:
+    """
+    Búsqueda semántica sobre pgvector. No se filtra por un umbral numérico de
+    similitud: con un corpus pequeño y un modelo de embeddings liviano en
+    español, el puntaje de coseno no separa de forma confiable lo relevante de
+    lo irrelevante (una pregunta totalmente ajena puede puntuar similar o más
+    alto que un parafraseo válido). Por eso se devuelven siempre los top_k
+    resultados con su puntaje, y es el LLM quien decide, leyendo el contenido,
+    si de verdad responden la pregunta del usuario.
+    """
+
     def __init__(self):
         print("Cargando modelo de embeddings, un momento...")
         self.model = SentenceTransformer(MODEL_NAME)
 
-    def buscar(self, query: str, top_k: int = 3) -> list[dict]:
+    def buscar(self, query: str, top_k: int = 5) -> list[dict]:
         embedding = self.model.encode(query, normalize_embeddings=True).tolist()
         conn = get_connection()
         try:
@@ -93,30 +105,30 @@ class FaqSearcher:
         finally:
             conn.close()
 
-        resultados = []
-        for faq_id, categoria, pregunta, respuesta, distance in rows:
-            similitud = 1 - distance
-            if similitud < SIMILARITY_THRESHOLD:
-                continue
-            resultados.append(
-                {
-                    "faq_id": faq_id,
-                    "categoria": categoria,
-                    "pregunta": pregunta,
-                    "respuesta": respuesta,
-                    "similitud": round(float(similitud), 4),
-                }
-            )
-        return resultados
+        return [
+            {
+                "faq_id": faq_id,
+                "categoria": categoria,
+                "pregunta": pregunta,
+                "respuesta": respuesta,
+                "similitud": round(float(1 - distance), 4),
+            }
+            for faq_id, categoria, pregunta, respuesta, distance in rows
+        ]
 
 
 def run_tool(searcher: FaqSearcher, tool_name: str, tool_input: dict) -> dict:
     if tool_name == "buscar_faqs":
-        top_k = tool_input.get("top_k") or 3
+        top_k = tool_input.get("top_k") or 5
         resultados = searcher.buscar(tool_input["query"], top_k=top_k)
-        if not resultados:
-            return {"resultados": [], "mensaje": "No se encontró información relevante en la base de conocimientos."}
-        return {"resultados": resultados}
+        return {
+            "resultados": resultados,
+            "nota": (
+                "El campo 'similitud' es orientativo y no siempre es confiable. "
+                "Evalúa el contenido de 'pregunta'/'respuesta' de cada resultado "
+                "para decidir si realmente responde lo que preguntó el usuario."
+            ),
+        }
     raise ValueError(f"Herramienta desconocida: {tool_name}")
 
 

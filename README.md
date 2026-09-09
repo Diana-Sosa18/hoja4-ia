@@ -9,13 +9,27 @@ preguntas sobre el evento.
 
 - **Base de datos vectorial:** PostgreSQL + extensión [pgvector](https://github.com/pgvector/pgvector),
   corriendo en un contenedor Docker.
-- **Embeddings:** `sentence-transformers` con el modelo `all-MiniLM-L6-v2` (384 dimensiones).
+- **Embeddings:** `sentence-transformers` con el modelo `all-MiniLM-L6-v2` (384
+  dimensiones). Se embebe únicamente el texto de la `PREGUNTA` de cada FAQ (no
+  la respuesta), porque las respuestas del corpus comparten una plantilla casi
+  idéntica entre sí y, si se incluyeran, todos los embeddings quedarían
+  demasiado parecidos entre ellos.
 - **Script de carga** (`src/load_data.py`): parsea `data/Corpus_FAQs_Parachute_SA_2026.txt`,
   genera un embedding por cada FAQ y lo inserta/actualiza en la tabla `faqs`.
 - **Agente** (`src/agent.py`): CLI interactiva que usa el SDK de Anthropic con una
   herramienta (`buscar_faqs`) configurada vía tool use. El modelo decide cuándo
-  llamar a la herramienta, esta hace la búsqueda semántica en pgvector y el
-  modelo redacta la respuesta final basándose únicamente en esos resultados.
+  llamar a la herramienta, esta hace la búsqueda semántica en pgvector (top 5)
+  y el modelo redacta la respuesta final basándose únicamente en esos resultados.
+
+  > **Nota sobre el umbral de relevancia:** `all-MiniLM-L6-v2` es un modelo
+  > entrenado mayormente en inglés, así que en español su puntaje de similitud
+  > coseno no siempre distingue de forma confiable una pregunta relacionada de
+  > una totalmente ajena (se observaron casos donde una pregunta sin relación
+  > alguna puntuó más alto que un parafraseo válido). Por eso el agente no
+  > filtra resultados por un umbral numérico fijo: la herramienta siempre
+  > devuelve los 5 resultados más cercanos con su puntaje, y es Claude quien,
+  > leyendo el contenido de cada uno, decide si realmente responden la
+  > pregunta o si debe admitir que no tiene esa información.
 
 ## Requisitos previos
 
