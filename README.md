@@ -1,9 +1,9 @@
 # Hoja de Trabajo #4 - Herramientas (CC3116)
 
 Agente de preguntas frecuentes para Parachute S.A. Implementa una base de datos
-vectorial en PostgreSQL con `pgvector` y un agente de LLM (Claude, con tool use)
-que consulta esa base de datos como única fuente de verdad para responder
-preguntas sobre el evento.
+vectorial en PostgreSQL con `pgvector` y un agente de LLM (Google Gemini, con
+tool use / function calling) que consulta esa base de datos como única fuente
+de verdad para responder preguntas sobre el evento.
 
 ## Arquitectura
 
@@ -16,10 +16,11 @@ preguntas sobre el evento.
   demasiado parecidos entre ellos.
 - **Script de carga** (`src/load_data.py`): parsea `data/Corpus_FAQs_Parachute_SA_2026.txt`,
   genera un embedding por cada FAQ y lo inserta/actualiza en la tabla `faqs`.
-- **Agente** (`src/agent.py`): CLI interactiva que usa el SDK de Anthropic con una
-  herramienta (`buscar_faqs`) configurada vía tool use. El modelo decide cuándo
-  llamar a la herramienta, esta hace la búsqueda semántica en pgvector (top 5)
-  y el modelo redacta la respuesta final basándose únicamente en esos resultados.
+- **Agente** (`src/agent.py`): CLI interactiva que usa el SDK de Google Gemini
+  (`google-genai`) con una herramienta (`buscar_faqs`) configurada vía function
+  calling. El modelo decide cuándo llamar a la herramienta, esta hace la
+  búsqueda semántica en pgvector (top 5) y el modelo redacta la respuesta
+  final basándose únicamente en esos resultados.
 
   > **Nota sobre el umbral de relevancia:** `all-MiniLM-L6-v2` es un modelo
   > entrenado mayormente en inglés, así que en español su puntaje de similitud
@@ -27,16 +28,22 @@ preguntas sobre el evento.
   > una totalmente ajena (se observaron casos donde una pregunta sin relación
   > alguna puntuó más alto que un parafraseo válido). Por eso el agente no
   > filtra resultados por un umbral numérico fijo: la herramienta siempre
-  > devuelve los 5 resultados más cercanos con su puntaje, y es Claude quien,
+  > devuelve los 5 resultados más cercanos con su puntaje, y es Gemini quien,
   > leyendo el contenido de cada uno, decide si realmente responden la
   > pregunta o si debe admitir que no tiene esa información.
+
+  > **¿Por qué Gemini y no Anthropic/OpenAI?** La API de Gemini tiene un nivel
+  > gratuito real (sin registrar tarjeta de crédito) suficiente para este
+  > proyecto, a diferencia de la API de Anthropic o de OpenAI que requieren
+  > cargar saldo desde la primera llamada.
 
 ## Requisitos previos
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado y corriendo.
 - Python 3.11 - 3.13 (recomendado; `sentence-transformers` puede no tener wheels
   disponibles todavía para versiones más nuevas).
-- Una API key de Anthropic ([consola](https://console.anthropic.com/)).
+- Una API key de Google Gemini ([Google AI Studio](https://aistudio.google.com/apikey),
+  nivel gratuito, no requiere tarjeta de crédito).
 
 ## 1. Inicializar la infraestructura
 
@@ -48,8 +55,10 @@ Copia el archivo de ejemplo y completa tu API key:
 cp .env.example .env
 ```
 
-Edita `.env` y coloca tu `ANTHROPIC_API_KEY`. Los valores de Postgres ya
-tienen defaults funcionales para desarrollo local.
+Edita `.env` y coloca tu `GEMINI_API_KEY` (consíguela gratis en
+[Google AI Studio](https://aistudio.google.com/apikey) con tu cuenta de
+Google, sin tarjeta de crédito). Los valores de Postgres ya tienen defaults
+funcionales para desarrollo local.
 
 ### 1.2 Levantar PostgreSQL + pgvector con Docker Compose
 
@@ -148,7 +157,7 @@ Para salir de la sesión, escribe `Bye` o presiona `Ctrl-C`.
 ├── src/
 │   ├── db.py                               # Conexión a PostgreSQL/pgvector
 │   ├── load_data.py                        # Script de carga (parseo + embeddings + insert)
-│   └── agent.py                            # Agente CLI con tool use (Anthropic)
+│   └── agent.py                            # Agente CLI con tool use (Google Gemini)
 ├── docker-compose.yml                      # Contenedor de PostgreSQL + pgvector
 ├── requirements.txt
 ├── .env.example

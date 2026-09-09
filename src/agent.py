@@ -1,21 +1,21 @@
 """
 Agente de preguntas frecuentes de Parachute S.A.
 
-Usa el SDK de Anthropic (tool use) para responder preguntas del usuario
-consultando exclusivamente la base de conocimientos almacenada en
-PostgreSQL + pgvector. Si la información no está en la base de datos,
-el agente debe admitir que no puede responder.
+Usa el SDK de Google Gemini (function calling / tool use) para responder
+preguntas del usuario consultando exclusivamente la base de conocimientos
+almacenada en PostgreSQL + pgvector. Si la información no está en la base de
+datos, el agente debe admitir que no puede responder.
 
 Uso:
     python src/agent.py
 
 Escriba "Bye" o presione Ctrl-C para salir.
 """
-import json
 import os
 
-import anthropic
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 from sentence_transformers import SentenceTransformer
 
 from db import get_connection
@@ -23,7 +23,7 @@ from db import get_connection
 load_dotenv()
 
 MODEL_NAME = "all-MiniLM-L6-v2"
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 SYSTEM_PROMPT = """Eres el asistente de atención al cliente de Parachute S.A., \
 un evento de paracaidismo en Guatemala. Tu única fuente de información es la \
@@ -46,30 +46,38 @@ Reglas estrictas:
 5. Responde siempre en español, de forma clara y directa.
 """
 
-TOOLS = [
-    {
-        "name": "buscar_faqs",
-        "description": (
-            "Busca en la base de conocimientos vectorial de preguntas frecuentes "
-            "de Parachute S.A. y devuelve las entradas semánticamente más "
-            "relevantes para una consulta dada."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Texto de búsqueda: la pregunta o tema por el que pregunta el usuario.",
+BUSCAR_FAQS_TOOL = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="buscar_faqs",
+            description=(
+                "Busca en la base de conocimientos vectorial de preguntas frecuentes "
+                "de Parachute S.A. y devuelve las entradas semánticamente más "
+                "relevantes para una consulta dada."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(
+                        type=types.Type.STRING,
+                        description="Texto de búsqueda: la pregunta o tema por el que pregunta el usuario.",
+                    ),
+                    "top_k": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="Cantidad de resultados a devolver (por defecto 5).",
+                    ),
                 },
-                "top_k": {
-                    "type": "integer",
-                    "description": "Cantidad de resultados a devolver (por defecto 5).",
-                },
-            },
-            "required": ["query"],
-        },
-    }
-]
+                required=["query"],
+            ),
+        )
+    ]
+)
+
+GENERATE_CONFIG = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
+    tools=[BUSCAR_FAQS_TOOL],
+)
+
 
 class FaqSearcher:
     """
@@ -117,10 +125,10 @@ class FaqSearcher:
         ]
 
 
-def run_tool(searcher: FaqSearcher, tool_name: str, tool_input: dict) -> dict:
+def run_tool(searcher: FaqSearcher, tool_name: str, tool_args: dict) -> dict:
     if tool_name == "buscar_faqs":
-        top_k = tool_input.get("top_k") or 5
-        resultados = searcher.buscar(tool_input["query"], top_k=top_k)
+        top_k = tool_args.get("top_k") or 5
+        resultados = searcher.buscar(tool_args["query"], top_k=top_k)
         return {
             "resultados": resultados,
             "nota": (
@@ -133,13 +141,13 @@ def run_tool(searcher: FaqSearcher, tool_name: str, tool_input: dict) -> dict:
 
 
 def chat_loop():
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise SystemExit("Falta ANTHROPIC_API_KEY en el entorno (.env).")
+        raise SystemExit("Falta GEMINI_API_KEY en el entorno (.env).")
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     searcher = FaqSearcher()
-    messages: list[dict] = []
+    history: list[types.Content] = []
 
     print("=" * 60)
     print("Agente de FAQs - Parachute S.A.")
@@ -159,38 +167,31 @@ def chat_loop():
             print("Agente: ¡Hasta luego!")
             break
 
-        messages.append({"role": "user", "content": user_input})
+        history.append(types.Content(role="user", parts=[types.Part(text=user_input)]))
 
         while True:
-            response = client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=1024,
-                system=SYSTEM_PROMPT,
-                tools=TOOLS,
-                messages=messages,
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=history,
+                config=GENERATE_CONFIG,
             )
-            messages.append({"role": "assistant", "content": response.content})
+            candidate = response.candidates[0]
+            history.append(candidate.content)
 
-            if response.stop_reason != "tool_use":
-                texto = "".join(
-                    block.text for block in response.content if block.type == "text"
-                )
+            function_calls = [p.function_call for p in candidate.content.parts if p.function_call]
+
+            if not function_calls:
+                texto = "".join(p.text for p in candidate.content.parts if p.text)
                 print(f"\nAgente: {texto}")
                 break
 
-            tool_results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                resultado = run_tool(searcher, block.name, block.input)
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": json.dumps(resultado, ensure_ascii=False),
-                    }
+            response_parts = []
+            for fc in function_calls:
+                resultado = run_tool(searcher, fc.name, dict(fc.args))
+                response_parts.append(
+                    types.Part.from_function_response(name=fc.name, response={"result": resultado})
                 )
-            messages.append({"role": "user", "content": tool_results})
+            history.append(types.Content(role="user", parts=response_parts))
 
 
 if __name__ == "__main__":
