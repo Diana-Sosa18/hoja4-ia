@@ -1,1 +1,142 @@
-# hoja4-ia
+# Hoja de Trabajo #4 - Herramientas (CC3116)
+
+Agente de preguntas frecuentes para Parachute S.A. Implementa una base de datos
+vectorial en PostgreSQL con `pgvector` y un agente de LLM (Claude, con tool use)
+que consulta esa base de datos como única fuente de verdad para responder
+preguntas sobre el evento.
+
+## Arquitectura
+
+- **Base de datos vectorial:** PostgreSQL + extensión [pgvector](https://github.com/pgvector/pgvector),
+  corriendo en un contenedor Docker.
+- **Embeddings:** `sentence-transformers` con el modelo `all-MiniLM-L6-v2` (384 dimensiones).
+- **Script de carga** (`src/load_data.py`): parsea `data/Corpus_FAQs_Parachute_SA_2026.txt`,
+  genera un embedding por cada FAQ y lo inserta/actualiza en la tabla `faqs`.
+- **Agente** (`src/agent.py`): CLI interactiva que usa el SDK de Anthropic con una
+  herramienta (`buscar_faqs`) configurada vía tool use. El modelo decide cuándo
+  llamar a la herramienta, esta hace la búsqueda semántica en pgvector y el
+  modelo redacta la respuesta final basándose únicamente en esos resultados.
+
+## Requisitos previos
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado y corriendo.
+- Python 3.11 - 3.13 (recomendado; `sentence-transformers` puede no tener wheels
+  disponibles todavía para versiones más nuevas).
+- Una API key de Anthropic ([consola](https://console.anthropic.com/)).
+
+## 1. Inicializar la infraestructura
+
+### 1.1 Variables de entorno
+
+Copia el archivo de ejemplo y completa tu API key:
+
+```bash
+cp .env.example .env
+```
+
+Edita `.env` y coloca tu `ANTHROPIC_API_KEY`. Los valores de Postgres ya
+tienen defaults funcionales para desarrollo local.
+
+### 1.2 Levantar PostgreSQL + pgvector con Docker Compose
+
+Con Docker Desktop abierto, desde la raíz del repositorio:
+
+```bash
+docker compose up -d
+```
+
+Esto descarga la imagen [`pgvector/pgvector:pg16`](https://hub.docker.com/r/pgvector/pgvector)
+y levanta un contenedor `hoja4_pgvector` escuchando en `localhost:5433`, con un
+volumen persistente (`pgvector_data`) para no perder los datos entre reinicios.
+
+> **Nota:** se usa el puerto `5433` (no el `5432` por defecto de PostgreSQL) para
+> evitar conflictos si ya tienes una instalación nativa de PostgreSQL corriendo
+> en el equipo. Si tu máquina tiene el puerto `5432` libre, puedes cambiarlo en
+> `.env` (`POSTGRES_PORT`).
+
+Verifica que el contenedor esté saludable:
+
+```bash
+docker compose ps
+```
+
+Para detener el contenedor (sin borrar datos):
+
+```bash
+docker compose down
+```
+
+Para borrar también el volumen de datos (reinicio completo):
+
+```bash
+docker compose down -v
+```
+
+> ¿Prefieres Podman? El mismo archivo funciona con `podman compose up -d`
+> (o `podman-compose up -d`), ya que la sintaxis de Compose es compatible.
+
+### 1.3 Entorno de Python
+
+```bash
+py -3.13 -m venv .venv
+.venv\Scripts\activate        # Windows
+pip install -r requirements.txt
+```
+
+La extensión `vector` y la tabla `faqs` se crean automáticamente la primera
+vez que corres el script de carga (`db/schema.sql`), no requieren pasos manuales.
+
+## 2. Cargar la base de conocimientos
+
+Con el contenedor corriendo y el entorno activado:
+
+```bash
+python src/load_data.py
+```
+
+Esto parsea las 120 FAQs de `data/Corpus_FAQs_Parachute_SA_2026.txt`, genera
+sus embeddings con `all-MiniLM-L6-v2` y las inserta (o actualiza, si ya existen)
+en la tabla `faqs` de PostgreSQL.
+
+## 3. Ejecutar el agente
+
+```bash
+python src/agent.py
+```
+
+El agente responde preguntas en una sesión interactiva por terminal, apoyándose
+siempre en la herramienta `buscar_faqs` para consultar la base de datos
+vectorial antes de responder. Si la pregunta no tiene relación con información
+disponible en la base de conocimientos, el agente lo indica explícitamente en
+lugar de inventar una respuesta.
+
+Para salir de la sesión, escribe `Bye` o presiona `Ctrl-C`.
+
+## Solución de problemas
+
+- **`FATAL: la autentificación password falló` / errores raros de codificación
+  al conectar con psycopg en Windows:** se debe a un bug conocido de
+  `psycopg2` con la configuración regional en español de Windows. Este proyecto
+  ya usa `psycopg` (v3), que no tiene ese problema.
+- **La conexión falla o llega a un Postgres con credenciales distintas:**
+  verifica que no tengas otro PostgreSQL (nativo, no en Docker) escuchando en
+  el mismo puerto (`netstat -ano | findstr 5432`). Por eso este proyecto usa
+  `5433` por defecto.
+
+## Estructura del repositorio
+
+```
+.
+├── data/
+│   └── Corpus_FAQs_Parachute_SA_2026.txt   # Corpus de FAQs entregado por Parachute S.A.
+├── db/
+│   └── schema.sql                          # Definición de la tabla faqs + índice ivfflat
+├── src/
+│   ├── db.py                               # Conexión a PostgreSQL/pgvector
+│   ├── load_data.py                        # Script de carga (parseo + embeddings + insert)
+│   └── agent.py                            # Agente CLI con tool use (Anthropic)
+├── docker-compose.yml                      # Contenedor de PostgreSQL + pgvector
+├── requirements.txt
+├── .env.example
+└── README.md
+```

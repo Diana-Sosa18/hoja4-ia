@@ -1,0 +1,24 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: hoja4_pgvector
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-parachute}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parachute}
+      POSTGRES_DB: ${POSTGRES_DB:-parachute_faqs}
+      # md5 evita un bug conocido de autenticación SCRAM con clientes libpq
+      # en Windows bajo configuración regional no inglesa.
+      POSTGRES_INITDB_ARGS: "--auth-host=md5"
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-parachute} -d ${POSTGRES_DB:-parachute_faqs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgvector_data:
