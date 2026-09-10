@@ -5,6 +5,11 @@ vectorial en PostgreSQL con `pgvector` y un agente de LLM (Google Gemini, con
 tool use / function calling) que consulta esa base de datos como única fuente
 de verdad para responder preguntas sobre el evento.
 
+## Video de demostración
+
+[Ver video](https://youtu.be/ur9YlvtcBsM) — carga de la base de conocimientos
+y el agente respondiendo preguntas en una sesión interactiva.
+
 ## Arquitectura
 
 - **Base de datos vectorial:** PostgreSQL + extensión [pgvector](https://github.com/pgvector/pgvector),
