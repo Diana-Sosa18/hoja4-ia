@@ -37,6 +37,18 @@ de verdad para responder preguntas sobre el evento.
   > proyecto, a diferencia de la API de Anthropic o de OpenAI que requieren
   > cargar saldo desde la primera llamada.
 
+  > **Sobre el corpus de FAQs:** de las 120 entradas, unas 106 (~88%) tienen
+  > una respuesta genérica de plantilla ("consulte a soporte para más
+  > detalles") y solo ~14 tienen un dato concreto (peso máximo, altura del
+  > salto, edad mínima, etc.). El agente trata la respuesta genérica como
+  > información oficial válida siempre que el TEMA de la pregunta coincida
+  > (no la descarta por "poco detallada"), y solo admite que no sabe cuando
+  > ninguna entrada de la base trata el tema preguntado. Para un video más
+  > vistoso, prueba con preguntas que sí tengan dato concreto, por ejemplo:
+  > *"¿Cuál es el peso máximo permitido para saltar?"*,
+  > *"¿A qué altura se realiza el salto tándem?"* o
+  > *"¿Cuál es la edad mínima para saltar?"*.
+
 ## Requisitos previos
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado y corriendo.
@@ -145,6 +157,15 @@ Para salir de la sesión, escribe `Bye` o presiona `Ctrl-C`.
   verifica que no tengas otro PostgreSQL (nativo, no en Docker) escuchando en
   el mismo puerto (`netstat -ano | findstr 5432`). Por eso este proyecto usa
   `5433` por defecto.
+- **`El servicio de Gemini no está disponible` / error 503:** el nivel
+  gratuito de Gemini a veces satura ("high demand"); el agente ya reintenta
+  automáticamente con backoff. Si persiste, espera un minuto e intenta de nuevo.
+- **`Se agotó la cuota gratuita` / error 429 `RESOURCE_EXHAUSTED`:** cada
+  modelo de Gemini tiene su propio límite de solicitudes gratis por día/minuto
+  (algunos modelos de vista previa, como los que resuelve el alias
+  `gemini-flash-latest`, pueden tener límites muy bajos, ej. 20/día). Cambia
+  `GEMINI_MODEL` en tu `.env` a otro modelo (por ejemplo `gemini-2.5-flash-lite`)
+  o espera a que se reinicie la cuota.
 
 ## Estructura del repositorio
 
